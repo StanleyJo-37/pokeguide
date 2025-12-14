@@ -5,6 +5,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  pokemonNames?: string[];
 }
 
 export interface ChatSession {
@@ -17,6 +18,7 @@ export interface ChatSession {
 export interface ChatResponse {
   response: string;
   chatId: string;
+  pokemonNames?: string[];
 }
 
 /**
