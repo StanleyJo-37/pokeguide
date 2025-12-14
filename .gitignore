@@ -1,2 +1,6 @@
 data
 .env
+model_cache
+unsloth_model
+vgcmaster_lora_model
+vgcmaster_model_tokenizer
