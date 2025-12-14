@@ -3,12 +3,14 @@
 import { useState, useCallback } from 'react';
 import ChatSidebar from './components/ChatSidebar';
 import ChatArea from './components/ChatArea';
+import SpriteSidebar from './components/SpriteSidebar';
 import { sendMessage, generateId, ChatMessage, ChatSession } from './lib/api';
 
 export default function Home() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [currentPokemonNames, setCurrentPokemonNames] = useState<string[]>([]);
 
   // Get current session's messages
   const activeSession = sessions.find(s => s.id === activeSessionId);
@@ -29,6 +31,8 @@ export default function Home() {
   // Select a chat session
   const handleSelectSession = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId);
+    // Reset sprites when switching sessions (optional, maybe improved later to persist per session)
+    setCurrentPokemonNames([]); 
   }, []);
 
   // Send a message
@@ -45,6 +49,7 @@ export default function Home() {
       setSessions(prev => [newSession, ...prev]);
       setActiveSessionId(newSession.id);
       currentSessionId = newSession.id;
+      setCurrentPokemonNames([]); // Reset for new chat
     }
 
     // Add user message
@@ -80,7 +85,12 @@ export default function Home() {
         role: 'assistant',
         content: response.response,
         timestamp: new Date(),
+        pokemonNames: response.pokemonNames
       };
+
+      if (response.pokemonNames && response.pokemonNames.length > 0) {
+        setCurrentPokemonNames(response.pokemonNames);
+      }
 
       setSessions(prev => prev.map(session => {
         if (session.id === currentSessionId) {
@@ -116,6 +126,9 @@ export default function Home() {
           isLoading={isLoading}
         />
       </main>
+
+      {/* Right Sidebar for Sprites */}
+      <SpriteSidebar pokemonNames={currentPokemonNames} />
     </div>
   );
 }
