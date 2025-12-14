@@ -110,16 +110,18 @@ export default function Home() {
 
   return (
     <div className="flex h-screen bg-[var(--background)]">
-      {/* Sidebar */}
-      <ChatSidebar
-        sessions={sessions}
-        activeSessionId={activeSessionId}
-        onSelectSession={handleSelectSession}
-        onNewChat={handleNewChat}
-      />
+      {/* Sidebar - 25% */}
+      <div className="w-1/4 min-w-[250px] h-full">
+        <ChatSidebar
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          onSelectSession={handleSelectSession}
+          onNewChat={handleNewChat}
+        />
+      </div>
       
-      {/* Main Chat Area */}
-      <main className="flex-1 flex flex-col min-w-0">
+      {/* Main Chat Area - 50% */}
+      <main className="w-1/2 flex flex-col min-w-0 border-x border-white/5">
         <ChatArea
           messages={messages}
           onSendMessage={handleSendMessage}
@@ -127,8 +129,10 @@ export default function Home() {
         />
       </main>
 
-      {/* Right Sidebar for Sprites */}
-      <SpriteSidebar pokemonNames={currentPokemonNames} />
+      {/* Right Sidebar for Sprites - 25% */}
+      <div className="w-1/4 min-w-[200px] h-full">
+        <SpriteSidebar pokemonNames={currentPokemonNames} />
+      </div>
     </div>
   );
 }

@@ -16,7 +16,7 @@ export default function ChatSidebar({
   onNewChat 
 }: ChatSidebarProps) {
   return (
-    <aside className="w-72 h-full flex flex-col glass-panel p-4 gap-3">
+    <aside className="w-full h-full flex flex-col glass-panel p-4 gap-3">
       {/* Logo & Title */}
       <div className="flex items-center gap-3 px-2 pb-4 border-b border-white/10">
         <div className="pokeball-icon shrink-0" />

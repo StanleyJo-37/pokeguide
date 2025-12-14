@@ -49,14 +49,20 @@ export default function SpriteSidebar({ pokemonNames }: SpriteSidebarProps) {
     fetchSprites();
   }, [pokemonNames]);
 
-  if (!pokemonNames || pokemonNames.length === 0) return null;
+  // if (!pokemonNames || pokemonNames.length === 0) return null; // Always show sidebar
 
   return (
-    <div className="w-24 bg-[var(--background-secondary)] border-l border-white/10 flex flex-col items-center py-6 gap-2 overflow-y-auto animate-fade-in custom-scrollbar transition-all duration-300">
+    <div className="w-full h-full bg-[var(--background-secondary)] border-l border-white/10 flex flex-col items-center py-6 gap-2 overflow-y-auto animate-fade-in custom-scrollbar transition-all duration-300">
       <h3 className="text-xs font-bold text-[var(--text-secondary)] uppercase tracking-wider mb-2 text-center">
-        Team
+        Team Sprites
       </h3>
       
+      {(!pokemonNames || pokemonNames.length === 0) && !loading && (
+        <p className="text-xs text-[var(--text-muted)] text-center px-4">
+          No sprites to display
+        </p>
+      )}
+
       {loading ? (
         <div className="flex flex-col gap-4">
            {[...Array(3)].map((_, i) => (
