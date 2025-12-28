@@ -149,7 +149,7 @@ def get_context_from_vector_store(prompt: str) -> str:
     
     try:
         query_vector = embeddings.embed_query(prompt)
-        D, I = vector_store.index.search(np.array([query_vector], dtype='float32'), k=5)
+        D, I = vector_store.index.search(np.array([query_vector], dtype='float32'), k=2)
         
         context_str = ""
         for idx in I[0]:
@@ -178,8 +178,6 @@ def generate_team(prompt: str, context: str = "") -> dict:
                     "name": "Pikachu",
                     "ability": "Lightning Rod",
                     "nature": "Timid",
-                    "pokemon_type": ["Electric"],
-                    "ev_spread": ["252 SpA", "252 Spe", "4 HP"],
                     "item": "Light Ball",
                     "moveset": ["Thunderbolt", "Volt Switch", "Grass Knot", "Protect"]
                 }
@@ -297,7 +295,7 @@ def generate_text(prompt: str, context: str = "", max_new_tokens: int = 1024) ->
     outputs = model.generate(
         inputs,
         max_new_tokens=max_new_tokens,
-        temperature=0.3,
+        temperature=0.1,
         do_sample=True,
         eos_token_id=tokenizer.eos_token_id,
     )
@@ -305,10 +303,11 @@ def generate_text(prompt: str, context: str = "", max_new_tokens: int = 1024) ->
     # Decode only the NEW tokens (skip prompt)
     new_tokens = outputs[0][inputs.shape[-1]:]
     response_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
-    
+    response_text = response_text.replace('<OUTPUT>', '')
+    response_text = response_text.replace('</OUTPUT>', '')
     return {
         "type": "text",
-        "response": response_text
+        "response": response_text.strip()
     }
 
 
