@@ -3,62 +3,93 @@ from flask_cors import CORS
 import torch
 import os
 import faiss
-import numpy as np # Ensure numpy is imported
+import numpy as np
 from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 import ollama
-import numpy as np
 import re
 import json
+import requests
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
+from pydantic import BaseModel, Field
+from typing import List
+from outlines import Generator, from_transformers
 
 # ======================
 # Configuration
 # ======================
+base_url = "https://pokeapi.co/api/v2/"
 
 class OllamaEmbeddings:
     def __init__(self, model="embeddinggemma"):
         self.model = model
 
     def embed_documents(self, texts):
-        """
-        Embed a list of texts in batch.
-        Returns a list of vectors.
-        """
         print(f"Embedding {len(texts)} texts with Ollama...")
         results = ollama.embed(model=self.model, input=texts)
         return [r for r in results.embeddings]
 
     def embed_query(self, text):
-        """
-        Embed a single query text.
-        Returns a single vector.
-        """
         results = ollama.embed(model=self.model, input=[text])
         return results.embeddings[0]
+
+class Pokemon(BaseModel):
+    name: str = Field(..., description="The name of the Pokemon")
+    ability: str = Field(..., description="The ability of the Pokemon")
+    nature: str = Field(..., description="The nature of the Pokemon")
+    item: str = Field(..., description="The item of the Pokemon")
+    moveset: List[str] = Field(..., description="The 4 moves of the Pokemon")
+
+class PokemonTeam(BaseModel):
+    team: List[Pokemon] = Field(..., description="The team of 6 Pokemon")
+
+def get_sprite(pokemon_name: str) -> str:
+    sprite_url = f"{base_url}pokemon/{pokemon_name.lower()}"
+    response = requests.get(sprite_url)
+    data = response.json()
+    return data["sprites"]["front_default"]
+
+def is_team_building_request(prompt: str) -> bool:
+    """
+    Detect if the user is asking to build a team
+    """
+    team_keywords = [
+        'build a team',
+        'create a team',
+        'make a team',
+        'generate a team',
+        'suggest a team',
+        'team for',
+        'build me a team',
+        'give me a team',
+        'team comp',
+        'team building',
+        'team suggestion',
+    ]
+    
+    prompt_lower = prompt.lower()
+    return any(keyword in prompt_lower for keyword in team_keywords)
+
+# ==========================================
 
 USE_MOCK_MODEL = os.environ.get("USE_MOCK_MODEL", "false").lower() == "true"
 
 MODEL_NAME = "./model_cache"
 ADAPTER_PATH = "../vgcmaster_lora_model"
 
-SYSTEM_PROMPT = (
-    "You are a competitive Pokémon VGC analysis model.\n"
-    "You must generate analysis strictly from the information provided in the <DATA> block.\n"
-    "Do not use outside knowledge or assumptions.\n"
-    "If the data is missing, ambiguous, or does not match the requested Pokémon, respond with a refusal.\n"
-    "\n"
-    "**FORMATTING RULES:**\n"
-    "1. Use **Markdown** for all responses.\n"
-    "2. If building a team, format it as:\n"
-    "   - **Team Summary**: A brief overview of the archetype.\n"
-    "   - **Team Members**: JSON-like exportable text or bullet points for each Pokémon.\n"
-    "   - **Strategy**: How to pilot the team.\n"
-    "3. **NEVER** use XML tags like <OUTPUT> or </OUTPUT>. output raw text only.\n"
-    "4. At the very end of your response, output a JSON list of the Pokémon names mentioned in your team builder, in lowercase.\n"
-    "   Format: ::POKEMON_LIST::[\"pikachu\", \"charizard\", ...]"
+SYSTEM_PROMPT_GENERAL = (
+    "You are a competitive Pokémon VGC analysis expert.\n"
+    "Answer questions about Pokemon, strategies, movesets, and competitive play.\n"
+    "Be concise, accurate, and helpful. Be short in your answer, at most 7 sentences.\n"
+    "Don't use complex sentences or long paragraphs.\n"
+)
+
+SYSTEM_PROMPT_TEAM = (
+    "You are a competitive Pokémon VGC team builder.\n"
+    "Generate a team of 6 Pokemon with complete competitive sets.\n"
+    "Include: name, ability, nature, held item, and 4 moves for each Pokemon.\n"
 )
 
 # ======================
@@ -69,22 +100,32 @@ if USE_MOCK_MODEL:
     print("🧪 Running in MOCK mode - no model loaded")
     tokenizer = None
     model = None
+    outlines_model = None
+    generator = None
 else:
     print("🔄 Loading model...")
     
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     
-    model = AutoModelForCausalLM.from_pretrained(
+    base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         device_map="auto",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     
-    model = PeftModel.from_pretrained(model, ADAPTER_PATH)
+    # Keep the original PeftModel for text generation
+    model = PeftModel.from_pretrained(base_model, ADAPTER_PATH)
     model.eval()
     
+    # ✅ Create structured output generator for team building ONLY
+    # Use a separate variable to avoid overwriting the original model
+    outlines_model = from_transformers(
+        model,
+        tokenizer, 
+    )
+    generator = Generator(outlines_model, PokemonTeam)
+    
     print("✅ Model loaded and ready!")
-
 
 # Global embeddings instance
 embeddings = OllamaEmbeddings(model="embeddinggemma")
@@ -101,50 +142,146 @@ except Exception as e:
     vector_store = None
 
 
-@torch.inference_mode()
-def generate(prompt: str, max_new_tokens: int = 1024) -> tuple[str, list[str]]:
-    # Mock mode for testing without model
-    if USE_MOCK_MODEL:
-        return f"[MOCK RESPONSE] Received prompt about VGC analysis. Prompt length: {len(prompt)} chars", []
+def get_context_from_vector_store(prompt: str) -> str:
+    """Retrieve context from vector store"""
+    if not vector_store:
+        return ""
     
-    context_str = ""
-    if vector_store:
-        try:
-            # Generate query embedding
-            query_vector = embeddings.embed_query(prompt)
-            
-            # Search FAISS
-            D, I = vector_store.index.search(np.array([query_vector], dtype='float32'), k=5)
-            
-            # Retrieve documents
-            for idx in I[0]:
-                if idx in vector_store.index_to_docstore_id:
-                    doc_id = vector_store.index_to_docstore_id[idx]
-                    if doc_id in vector_store.docstore._dict:
-                        doc = vector_store.docstore.search(doc_id)
-                        
-                        # Format metadata safely
-                        meta_str = ", ".join([f"{k}: {v}" for k, v in doc.metadata.items()])
-                        context_str += f"Content: {doc.page_content}\nSource Info: {meta_str}\n\n"
-        except Exception as e:
-            print(f"Error during retrieval: {e}")
-            
-    # Construct the final prompt with context
-    if context_str:
+    try:
+        query_vector = embeddings.embed_query(prompt)
+        D, I = vector_store.index.search(np.array([query_vector], dtype='float32'), k=5)
+        
+        context_str = ""
+        for idx in I[0]:
+            if idx in vector_store.index_to_docstore_id:
+                doc_id = vector_store.index_to_docstore_id[idx]
+                if doc_id in vector_store.docstore._dict:
+                    doc = vector_store.docstore.search(doc_id)
+                    meta_str = ", ".join([f"{k}: {v}" for k, v in doc.metadata.items()])
+                    context_str += f"Content: {doc.page_content}\nSource Info: {meta_str}\n\n"
+        
+        return context_str
+    except Exception as e:
+        print(f"Error during retrieval: {e}")
+        return ""
+
+
+@torch.inference_mode()
+def generate_team(prompt: str, context: str = "") -> dict:
+    """
+    Generate structured Pokemon team output using Outlines
+    """
+    if USE_MOCK_MODEL:
+        return {
+            "team": [
+                {
+                    "name": "Pikachu",
+                    "ability": "Lightning Rod",
+                    "nature": "Timid",
+                    "pokemon_type": ["Electric"],
+                    "ev_spread": ["252 SpA", "252 Spe", "4 HP"],
+                    "item": "Light Ball",
+                    "moveset": ["Thunderbolt", "Volt Switch", "Grass Knot", "Protect"]
+                }
+            ],
+            "sprites": ["https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/25.png"]
+        }
+    
+    # Construct prompt with context
+    if context:
+        full_prompt = (
+            f"{SYSTEM_PROMPT_TEAM}\n\n"
+            f"Context information:\n"
+            f"---------------------\n"
+            f"{context}"
+            f"---------------------\n\n"
+            f"User request: {prompt}\n\n"
+            f"Generate a competitive VGC team in JSON format."
+        )
+    else:
+        full_prompt = f"{SYSTEM_PROMPT_TEAM}\n\nUser request: {prompt}\n\nGenerate a competitive VGC team in JSON format."
+    
+    try:
+        # ✅ Use structured output generator
+        result = generator(full_prompt)
+        print(f"🔍 Raw generator output type: {type(result)}")
+        print(f"🔍 Raw generator output: {result}")
+        
+        # Outlines may return a string - parse it if needed
+        if isinstance(result, str):
+            print("📝 Parsing JSON string from generator...")
+            result = json.loads(result)
+        
+        # Validate output with Pydantic
+        pokemon_team = PokemonTeam.model_validate(result)
+        print(f"✅ Validated team: {pokemon_team}")
+        
+        # Convert Pydantic model to dict
+        team_dict = pokemon_team.model_dump()
+        print(f"📦 Team dict: {team_dict}")
+        
+        # Get sprites for each Pokemon
+        sprites = []
+        for pokemon in team_dict['team']:
+            try:
+                sprite = get_sprite(pokemon['name'])
+                sprites.append(sprite)
+            except Exception as e:
+                print(f"Error fetching sprite for {pokemon['name']}: {e}")
+                sprites.append(None)
+        
+        return {
+            "type": "team",
+            "team": team_dict['team'],
+            "sprites": sprites
+        }
+        
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON parsing error: {e}")
+        print(f"❌ Raw output was: {result}")
+        return {
+            "type": "error",
+            "error": f"Failed to parse team JSON: {str(e)}",
+            "team": [],
+            "sprites": []
+        }
+    except Exception as e:
+        print(f"Error during team generation: {e}")
+        return {
+            "type": "error",
+            "error": str(e),
+            "team": [],
+            "sprites": []
+        }
+
+
+@torch.inference_mode()
+def generate_text(prompt: str, context: str = "", max_new_tokens: int = 1024) -> dict:
+    """
+    Generate regular text response (for analysis, questions, etc.)
+    """
+    if USE_MOCK_MODEL:
+        return {
+            "type": "text",
+            "response": f"[MOCK] This is a text response about: {prompt}"
+        }
+    
+    # Construct prompt with context
+    if context:
         full_user_content = (
             f"Context information is below.\n"
             f"---------------------\n"
-            f"{context_str}"
+            f"{context}"
             f"---------------------\n"
-            f"Given the context information and no prior knowledge, answer the query.\n"
+            f"Given the context information, answer the query precisely based on the context information.\n"
             f"Query: {prompt}"
         )
     else:
         full_user_content = prompt
 
-    # Build messages with system prompt
+    # Build messages
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": SYSTEM_PROMPT_GENERAL},
         {"role": "user", "content": full_user_content}
     ]
     
@@ -169,22 +306,34 @@ def generate(prompt: str, max_new_tokens: int = 1024) -> tuple[str, list[str]]:
     new_tokens = outputs[0][inputs.shape[-1]:]
     response_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
     
-    # Post-processing: remove <OUTPUT> tags if they persist
-    response_text = response_text.replace("<OUTPUT>", "").replace("</OUTPUT>", "")
-    
-    # Extract Pokemon List
-    pokemon_names = []
-    match = re.search(r"::POKEMON_LIST::(\[.*?\])", response_text, re.DOTALL)
-    if match:
-        try:
-            json_str = match.group(1)
-            pokemon_names = json.loads(json_str)
-            # Remove the list from the visible text
-            response_text = response_text.replace(match.group(0), "").strip()
-        except:
-            print("Failed to parse Pokemon list JSON")
+    return {
+        "type": "text",
+        "response": response_text
+    }
 
-    return response_text, pokemon_names
+
+def generate(prompt: str) -> dict:
+    """
+    Main generation function that routes to team building or text generation
+    Returns both the result and the context used for RAG
+    """
+    # Get context from vector store
+    context = get_context_from_vector_store(prompt)
+    print(f"📚 Context retrieved: {len(context)} chars" if context else "📚 No context retrieved")
+    
+    # Check if user wants a team
+    if is_team_building_request(prompt):
+        print("🎮 Detected team building request - using structured output")
+        result = generate_team(prompt, context)
+    else:
+        print("💬 General query - using text generation")
+        result = generate_text(prompt, context)
+    
+    # Include context in the result
+    result["context"] = context if context else None
+    print(f"📤 Sending response with context: {bool(result.get('context'))}")
+    return result
+
 
 # ======================
 # Flask app
@@ -203,12 +352,11 @@ def chat():
     prompt = data['prompt']
     chat_id = data.get('chatId', 'default')
 
-    response_text, pokemon_names = generate(prompt)
+    result = generate(prompt)
 
     return jsonify({
-        'response': response_text,
-        'chatId': chat_id,
-        'pokemonNames': pokemon_names
+        'response': result,
+        'chatId': chat_id
     })
 
 @app.route('/health', methods=['GET'])
@@ -220,6 +368,6 @@ if __name__ == '__main__':
     app.run(
         host='0.0.0.0',
         port=5000,
-        debug=False,   # IMPORTANT
+        debug=False,
         threaded=False
     )
