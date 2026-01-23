@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import { useState, useCallback } from 'react';
-import ChatSidebar from './components/ChatSidebar';
-import ChatArea from './components/ChatArea';
-import SpriteSidebar from './components/SpriteSidebar';
-import { sendMessage, generateId, ChatMessage, ChatSession } from './lib/api';
+import { useState, useCallback } from "react";
+import ChatSidebar from "./components/ChatSidebar";
+import ChatArea from "./components/ChatArea";
+import SpriteSidebar from "./components/SpriteSidebar";
+import { sendMessage, generateId, ChatMessage, ChatSession } from "./lib/api";
 
 export default function Home() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -13,18 +13,18 @@ export default function Home() {
   const [currentPokemonNames, setCurrentPokemonNames] = useState<string[]>([]);
 
   // Get current session's messages
-  const activeSession = sessions.find(s => s.id === activeSessionId);
+  const activeSession = sessions.find((s) => s.id === activeSessionId);
   const messages = activeSession?.messages || [];
 
   // Create a new chat session
   const handleNewChat = useCallback(() => {
     const newSession: ChatSession = {
       id: generateId(),
-      title: 'New Chat',
+      title: "New Chat",
       messages: [],
       createdAt: new Date(),
     };
-    setSessions(prev => [newSession, ...prev]);
+    setSessions((prev) => [newSession, ...prev]);
     setActiveSessionId(newSession.id);
   }, []);
 
@@ -32,86 +32,94 @@ export default function Home() {
   const handleSelectSession = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId);
     // Reset sprites when switching sessions (optional, maybe improved later to persist per session)
-    setCurrentPokemonNames([]); 
+    setCurrentPokemonNames([]);
   }, []);
 
   // Send a message
-  const handleSendMessage = useCallback(async (content: string) => {
-    // If no active session, create one
-    let currentSessionId = activeSessionId;
-    if (!currentSessionId) {
-      const newSession: ChatSession = {
-        id: generateId(),
-        title: content.slice(0, 30) + (content.length > 30 ? '...' : ''),
-        messages: [],
-        createdAt: new Date(),
-      };
-      setSessions(prev => [newSession, ...prev]);
-      setActiveSessionId(newSession.id);
-      currentSessionId = newSession.id;
-      setCurrentPokemonNames([]); // Reset for new chat
-    }
-
-    // Add user message
-    const userMessage: ChatMessage = {
-      id: generateId(),
-      role: 'user',
-      content,
-      timestamp: new Date(),
-    };
-
-    setSessions(prev => prev.map(session => {
-      if (session.id === currentSessionId) {
-        // Update title if this is the first message
-        const newTitle = session.messages.length === 0 
-          ? content.slice(0, 30) + (content.length > 30 ? '...' : '')
-          : session.title;
-        return {
-          ...session,
-          title: newTitle,
-          messages: [...session.messages, userMessage],
+  const handleSendMessage = useCallback(
+    async (content: string) => {
+      // If no active session, create one
+      let currentSessionId = activeSessionId;
+      if (!currentSessionId) {
+        const newSession: ChatSession = {
+          id: generateId(),
+          title: content.slice(0, 30) + (content.length > 30 ? "..." : ""),
+          messages: [],
+          createdAt: new Date(),
         };
+        setSessions((prev) => [newSession, ...prev]);
+        setActiveSessionId(newSession.id);
+        currentSessionId = newSession.id;
+        setCurrentPokemonNames([]); // Reset for new chat
       }
-      return session;
-    }));
 
-    // Send to backend and get response
-    setIsLoading(true);
-    try {
-      const response = await sendMessage(content, currentSessionId);
-      
-      const assistantMessage: ChatMessage = {
+      // Add user message
+      const userMessage: ChatMessage = {
         id: generateId(),
-        role: 'assistant',
-        content: response.response,
+        role: "user",
+        content,
         timestamp: new Date(),
-        pokemonNames: response.pokemonNames
       };
 
-      if (response.pokemonNames && response.pokemonNames.length > 0) {
-        setCurrentPokemonNames(response.pokemonNames);
-      }
+      setSessions((prev) =>
+        prev.map((session) => {
+          if (session.id === currentSessionId) {
+            // Update title if this is the first message
+            const newTitle =
+              session.messages.length === 0
+                ? content.slice(0, 30) + (content.length > 30 ? "..." : "")
+                : session.title;
+            return {
+              ...session,
+              title: newTitle,
+              messages: [...session.messages, userMessage],
+            };
+          }
+          return session;
+        }),
+      );
 
-      setSessions(prev => prev.map(session => {
-        if (session.id === currentSessionId) {
-          return {
-            ...session,
-            messages: [...session.messages, assistantMessage],
-          };
+      // Send to backend and get response
+      setIsLoading(true);
+      try {
+        const response = await sendMessage(content, currentSessionId);
+
+        const assistantMessage: ChatMessage = {
+          id: generateId(),
+          role: "assistant",
+          content: response.response,
+          timestamp: new Date(),
+          pokemonNames: response.pokemonNames,
+        };
+
+        if (response.pokemonNames && response.pokemonNames.length > 0) {
+          setCurrentPokemonNames(response.pokemonNames);
         }
-        return session;
-      }));
-    } catch (error) {
-      console.error('Failed to get response:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [activeSessionId]);
+
+        setSessions((prev) =>
+          prev.map((session) => {
+            if (session.id === currentSessionId) {
+              return {
+                ...session,
+                messages: [...session.messages, assistantMessage],
+              };
+            }
+            return session;
+          }),
+        );
+      } catch (error) {
+        console.error("Failed to get response:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [activeSessionId],
+  );
 
   return (
-    <div className="flex h-screen bg-[var(--background)]">
+    <div className="flex h-screen bg-background">
       {/* Sidebar - 25% */}
-      <div className="w-1/4 min-w-[250px] h-full">
+      <div className="w-1/4 min-w-62.5 h-full">
         <ChatSidebar
           sessions={sessions}
           activeSessionId={activeSessionId}
@@ -119,7 +127,7 @@ export default function Home() {
           onNewChat={handleNewChat}
         />
       </div>
-      
+
       {/* Main Chat Area - 50% */}
       <main className="w-1/2 flex flex-col min-w-0 border-x border-white/5">
         <ChatArea
@@ -130,7 +138,7 @@ export default function Home() {
       </main>
 
       {/* Right Sidebar for Sprites - 25% */}
-      <div className="w-1/4 min-w-[200px] h-full">
+      <div className="w-1/4 min-w-50 h-full">
         <SpriteSidebar pokemonNames={currentPokemonNames} />
       </div>
     </div>
